@@ -1,0 +1,72 @@
+name: Update Jira on Merge
+
+on:
+  pull_request:
+    types: [closed]
+
+jobs:
+  update-jira:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Extract Jira issue ID
+      id: extract-jira-id
+      run: |
+        ISSUE_ID=$(echo '${{ github.event.pull_request.title }}' | grep -o '[A-Z]\+-[0-9]\+' | head -1)
+        echo "ISSUE_ID=${ISSUE_ID}" >> $GITHUB_OUTPUT
+        echo "Extracted Jira issue ID: ${ISSUE_ID}"
+        
+    - name: Update Jira issue status
+      if: steps.extract-jira-id.outputs.ISSUE_ID != ''
+      env:
+        JIRA_ISSUE_ID: ${{ steps.extract-jira-id.outputs.ISSUE_ID }}
+      run: |
+        curl --request PUT \
+          --url "${{ secrets.JIRA_BASE_URL }}/rest/api/2/issue/$JIRA_ISSUE_ID/transitions" \
+          --user "${{ secrets.JIRA_USER_EMAIL }}:${{ secrets.JIRA_API_TOKEN }}" \
+          --header "Accept: application/json" \
+          --header "Content-Type: application/json" \
+          --data '{
+            "transition": {
+              "id": "31" # Thay bằng ID transition thực tế trong Jira của bạn
+            }
+          }'
+
+
+
+    - name: Notify Slack
+      if: steps.extract-jira-id.outputs.ISSUE_ID != '' && success()
+      run: |
+        curl -X POST \
+          -H 'Content-type: application/json' \
+          --data '{
+            "text": "Issue ${{ steps.extract-jira-id.outputs.ISSUE_ID }} đã được đóng thành công!",
+            "blocks": [
+              {
+                "type": "section",
+                "text": {
+                  "type": "mrkdwn",
+                  "text": "*Một issue Jira đã được hoàn thành* :tada:"
+                }
+              },
+              {
+                "type": "section",
+                "fields": [
+                  {
+                    "type": "mrkdwn",
+                    "text": "*Issue:*\n<${{ secrets.JIRA_BASE_URL }}/browse/${{ steps.extract-jira-id.outputs.ISSUE_ID }}|${{ steps.extract-jira-id.outputs.ISSUE_ID }}>"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*PR:*\n<${{ github.event.pull_request.html_url }}|#${{ github.event.pull_request.number }}>"
+                  },
+                  {
+                    "type": "mrkdwn",
+                    "text": "*Người merge:*\n${{ github.event.pull_request.merged_by.login }}"
+                  }
+                ]
+              }
+            ]
+          }' \
+          ${{ secrets.SLACK_WEBHOOK_URL }}
